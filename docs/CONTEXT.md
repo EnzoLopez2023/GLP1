@@ -54,6 +54,54 @@ strong reason:
 
 ## Work history (newest first)
 
+### 2026-05-08 — Medical Records section (commit `bc210f8`)
+
+**Problem.** User wanted a personal medical records section in the Analysis
+hub backed by real lab data from 2021–2026 ambulatory summary PDFs. Data
+needed to live in the existing per-user SQLite DB without touching existing
+tables.
+
+**What shipped.**
+- `server.js`: 5 new tables added to `SCHEMA_SQL` — `medical_vitals`,
+  `medical_lab_results`, `medical_diagnoses`, `medical_medications`,
+  `medical_procedures`. API routes: `GET /api/medical/{vitals,labs,
+  diagnoses,medications,procedures}` and `POST /api/medical/seed`.
+- `src/pages/MedicalRecords.jsx` (new): three-tab page.
+  - **Overview**: stat pills for latest HbA1c/glucose/weight/ALT, weight
+    area chart over all visits (2021–2026), HbA1c trend with diabetes
+    reference lines, lipid panel trend, liver enzyme trend.
+  - **Labs**: panel filter chips (All/HbA1c/Glucose/Lipid/CBC/CMP/etc.),
+    per-test expandable history rows, H/L color coding.
+  - **History**: diagnoses, medications, procedures each as icon-tiled
+    lists; vitals table showing every visit.
+- Navigation: added `/medical` route, "Medical Records" layout label,
+  "Medical Records" hub card in Settings Analysis section.
+- `scripts/seed-medical-records.mjs` (gitignored): one-shot seed script
+  with all extracted medical data; run via `node scripts/... <db-path>`.
+
+**Data seeded (from ambulatory PDFs).**
+- 7 vitals visits (2021-08-03 → 2024-10-04). Weights converted from grams.
+- 28 lab entries across 6 dates:
+  - HbA1c trajectory: 5.5% → 5.6% → 5.9% (prediabetic) → 10.2% (DM)
+  - Elevated ALT across all periods (NAFLD pattern)
+  - Triglycerides elevated 2021 (208, 152 mg/dL); HDL low 2023 (37)
+  - Glucose elevated throughout (115–138 mg/dL until 2026 jump to 246)
+- 5 diagnoses: Type 2 DM (2026-03-10), prediabetes (resolved), hyper-
+  triglyceridemia, elevated ALT, low HDL
+- 3 medications: Azithromycin (completed), Benzonatate (completed),
+  Tirzepatide/Mounjaro (active)
+- 3 procedures: COVID PCR test (Jul 2021), pilonidal cyst excision (Sep
+  2021), colonoscopy (Oct 2024)
+
+**Seeding approach.**
+Tables created via `SCHEMA_SQL` on first `getUserDb()` call after deploy.
+For the running container, tables were created manually then seeded via
+`docker cp` + `docker exec node seed script` before the deploy landed.
+Re-seeding is safe: vitals use `INSERT OR IGNORE` (unique visitDate),
+labs wipe and re-insert, others use `INSERT OR IGNORE` by name.
+
+---
+
 ### 2026-05-07 — Per-user data isolation + first-time onboarding (commit `ea94897`)
 
 **Problem.** App was single-tenant: shared `/data/glp1.db`, profile/settings
