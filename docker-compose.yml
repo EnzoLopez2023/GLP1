@@ -1,0 +1,33 @@
+services:
+  glp1-tracker:
+    build:
+      context: .
+      args:
+        # AAD identifiers are baked into the frontend at build time by Vite.
+        # Sourced from the same AAD_* vars already required by the backend.
+        VITE_AAD_CLIENT_ID: ${AAD_CLIENT_ID}
+        VITE_AAD_TENANT_ID: ${AAD_TENANT_ID}
+    container_name: glp1-tracker
+    ports:
+      - "3004:3004"
+    volumes:
+      - glp1-data:/data
+    environment:
+      PORT: 3004
+      # Per-user SQLite files live here; created on first authenticated request.
+      USERS_DIR: /data/users
+      # Legacy single-user DB. If present and PRIMARY_USER_OID matches the
+      # caller's AAD oid on first request, the file is moved to the user's
+      # per-user path. Set this once for the existing primary user; safe to
+      # leave unset for fresh deployments.
+      LEGACY_DB_PATH: /data/glp1.db
+      PRIMARY_USER_OID: ${PRIMARY_USER_OID}
+      # AAD identity validation. Tokens are verified against this tenant +
+      # client; mismatched tid/aud is rejected with 401.
+      AAD_TENANT_ID: ${AAD_TENANT_ID}
+      AAD_CLIENT_ID: ${AAD_CLIENT_ID}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+    restart: unless-stopped
+
+volumes:
+  glp1-data:

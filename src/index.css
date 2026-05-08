@@ -1,0 +1,76 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  * {
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  html, body {
+    background-color: theme('colors.wood.50');
+  }
+
+  body {
+    @apply antialiased text-wood-900;
+    font-family: 'Inter', system-ui, sans-serif;
+    /* Tabular figures for animating numbers */
+    font-feature-settings: 'cv11' 1, 'ss01' 1;
+  }
+
+  /* Display headings — Inter Tight, tighter tracking */
+  h1, h2, .display {
+    font-family: 'Inter Tight', 'Inter', system-ui, sans-serif;
+    letter-spacing: -0.025em;
+  }
+
+  /* Custom scrollbar */
+  ::-webkit-scrollbar {
+    width: 4px;
+    height: 4px;
+  }
+  ::-webkit-scrollbar-track {
+    @apply bg-transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    @apply bg-wood-200 rounded-full;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    @apply bg-wood-300;
+  }
+}
+
+@layer utilities {
+  .text-balance {
+    text-wrap: balance;
+  }
+
+  /* Use everywhere a number animates so digits don't jitter. */
+  .tabular {
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Skeleton shimmer used by chart-load and content-load placeholders. */
+  .skeleton {
+    background: linear-gradient(
+      90deg,
+      theme('colors.wood.100') 0%,
+      theme('colors.wood.200') 50%,
+      theme('colors.wood.100') 100%
+    );
+    background-size: 200% 100%;
+    animation: shimmer 1.6s linear infinite;
+  }
+}
+
+/* prefers-reduced-motion overrides */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git log *)",
+      "Bash(sed -n '20,32p' server.js)",
+      "Bash(sed -n '8,22p' Dockerfile)",
+      "Bash(git commit -m ' *)"
+    ]
+  }
+}
