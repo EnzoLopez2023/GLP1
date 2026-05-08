@@ -10,7 +10,7 @@ import Card, { CardHeader } from '../components/ui/Card'
 import { Stagger, StaggerItem, FadeUp } from '../components/motion/primitives'
 import {
   Activity, FlaskConical, Pill, Stethoscope, ClipboardList,
-  TrendingUp, TrendingDown, Minus, AlertTriangle, CheckCircle,
+  TrendingUp, TrendingDown, CheckCircle,
   ChevronDown, ChevronUp, Database,
 } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
@@ -88,11 +88,17 @@ export default function MedicalRecords() {
   const [tab, setTab] = useState('overview')
   const [labPanel, setLabPanel] = useState('All')
 
-  const { data: vitals = [] }      = useQuery(api.getMedicalVitals)
-  const { data: labs = [] }        = useQuery(api.getMedicalLabs)
-  const { data: diagnoses = [] }   = useQuery(api.getMedicalDiagnoses)
-  const { data: medications = [] } = useQuery(api.getMedicalMedications)
-  const { data: procedures = [] }  = useQuery(api.getMedicalProcedures)
+  const { data: vitalsRaw }      = useQuery(api.getMedicalVitals)
+  const { data: labsRaw }        = useQuery(api.getMedicalLabs)
+  const { data: diagnosesRaw }   = useQuery(api.getMedicalDiagnoses)
+  const { data: medicationsRaw } = useQuery(api.getMedicalMedications)
+  const { data: proceduresRaw }  = useQuery(api.getMedicalProcedures)
+
+  const vitals      = vitalsRaw      ?? []
+  const labs        = labsRaw        ?? []
+  const diagnoses   = diagnosesRaw   ?? []
+  const medications = medicationsRaw ?? []
+  const procedures  = proceduresRaw  ?? []
 
   const hasData = vitals.length || labs.length || diagnoses.length || medications.length || procedures.length
 
