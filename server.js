@@ -151,6 +151,70 @@ const SCHEMA_SQL = `
     dataUrl TEXT NOT NULL
   );
 
+  CREATE TABLE IF NOT EXISTS medical_vitals (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    visitDate   TEXT NOT NULL UNIQUE,
+    weightLbs   REAL,
+    bpSystolic  INTEGER,
+    bpDiastolic INTEGER,
+    heartRate   INTEGER,
+    tempF       REAL,
+    spO2        REAL,
+    provider    TEXT DEFAULT '',
+    facility    TEXT DEFAULT '',
+    notes       TEXT DEFAULT ''
+  );
+
+  CREATE TABLE IF NOT EXISTS medical_lab_results (
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    collectedDate    TEXT NOT NULL,
+    panel            TEXT NOT NULL,
+    testName         TEXT NOT NULL,
+    value            REAL,
+    valueText        TEXT,
+    unit             TEXT DEFAULT '',
+    refLow           REAL,
+    refHigh          REAL,
+    refText          TEXT DEFAULT '',
+    flag             TEXT DEFAULT '',
+    orderingProvider TEXT DEFAULT '',
+    notes            TEXT DEFAULT ''
+  );
+
+  CREATE TABLE IF NOT EXISTS medical_diagnoses (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    name         TEXT NOT NULL,
+    icd10        TEXT DEFAULT '',
+    onsetDate    TEXT,
+    resolvedDate TEXT,
+    status       TEXT DEFAULT 'active',
+    provider     TEXT DEFAULT '',
+    notes        TEXT DEFAULT ''
+  );
+
+  CREATE TABLE IF NOT EXISTS medical_medications (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    name        TEXT NOT NULL,
+    dosage      TEXT DEFAULT '',
+    instructions TEXT DEFAULT '',
+    startDate   TEXT,
+    endDate     TEXT,
+    status      TEXT DEFAULT 'active',
+    prescriber  TEXT DEFAULT '',
+    reason      TEXT DEFAULT '',
+    notes       TEXT DEFAULT ''
+  );
+
+  CREATE TABLE IF NOT EXISTS medical_procedures (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    name          TEXT NOT NULL,
+    procedureDate TEXT NOT NULL,
+    status        TEXT DEFAULT 'completed',
+    provider      TEXT DEFAULT '',
+    facility      TEXT DEFAULT '',
+    notes         TEXT DEFAULT ''
+  );
+
   -- Seed singleton rows if missing
   INSERT OR IGNORE INTO profile  (id) VALUES (1);
   INSERT OR IGNORE INTO settings (id) VALUES (1);
@@ -577,6 +641,102 @@ app.post('/api/import', (req, res) => {
     res.json({ ok: true })
   } catch (err) {
     console.error('Import error:', err.message)
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// ── Medical Records ───────────────────────────────────────────────────────────
+app.get('/api/medical/vitals', (req, res) => {
+  res.json(req.db.prepare('SELECT * FROM medical_vitals ORDER BY visitDate ASC').all())
+})
+
+app.get('/api/medical/labs', (req, res) => {
+  const { panel } = req.query
+  const sql = panel
+    ? 'SELECT * FROM medical_lab_results WHERE panel=? ORDER BY collectedDate ASC, panel, testName'
+    : 'SELECT * FROM medical_lab_results ORDER BY collectedDate ASC, panel, testName'
+  res.json(panel ? req.db.prepare(sql).all(panel) : req.db.prepare(sql).all())
+})
+
+app.get('/api/medical/diagnoses', (req, res) => {
+  res.json(req.db.prepare('SELECT * FROM medical_diagnoses ORDER BY onsetDate ASC').all())
+})
+
+app.get('/api/medical/medications', (req, res) => {
+  res.json(req.db.prepare('SELECT * FROM medical_medications ORDER BY startDate ASC').all())
+})
+
+app.get('/api/medical/procedures', (req, res) => {
+  res.json(req.db.prepare('SELECT * FROM medical_procedures ORDER BY procedureDate ASC').all())
+})
+
+// One-shot seed — inserts records safely, skips any that already exist.
+app.post('/api/medical/seed', (req, res) => {
+  const { vitals = [], labs = [], diagnoses = [], medications = [], procedures = [] } = req.body
+
+  const doSeed = req.db.transaction(() => {
+    const insVital = req.db.prepare(`
+      INSERT OR IGNORE INTO medical_vitals
+        (visitDate,weightLbs,bpSystolic,bpDiastolic,heartRate,tempF,spO2,provider,facility,notes)
+      VALUES (@visitDate,@weightLbs,@bpSystolic,@bpDiastolic,@heartRate,@tempF,@spO2,@provider,@facility,@notes)
+    `)
+    for (const v of vitals) insVital.run({
+      visitDate: v.visitDate, weightLbs: v.weightLbs ?? null,
+      bpSystolic: v.bpSystolic ?? null, bpDiastolic: v.bpDiastolic ?? null,
+      heartRate: v.heartRate ?? null, tempF: v.tempF ?? null, spO2: v.spO2 ?? null,
+      provider: v.provider ?? '', facility: v.facility ?? '', notes: v.notes ?? '',
+    })
+
+    const insLab = req.db.prepare(`
+      INSERT INTO medical_lab_results
+        (collectedDate,panel,testName,value,valueText,unit,refLow,refHigh,refText,flag,orderingProvider,notes)
+      VALUES (@collectedDate,@panel,@testName,@value,@valueText,@unit,@refLow,@refHigh,@refText,@flag,@orderingProvider,@notes)
+    `)
+    // Clear existing labs before seeding so duplicates from repeated seed calls are avoided.
+    if (labs.length) req.db.prepare('DELETE FROM medical_lab_results').run()
+    for (const l of labs) insLab.run({
+      collectedDate: l.collectedDate, panel: l.panel, testName: l.testName,
+      value: l.value ?? null, valueText: l.valueText ?? null, unit: l.unit ?? '',
+      refLow: l.refLow ?? null, refHigh: l.refHigh ?? null, refText: l.refText ?? '',
+      flag: l.flag ?? '', orderingProvider: l.orderingProvider ?? '', notes: l.notes ?? '',
+    })
+
+    const insDx = req.db.prepare(`
+      INSERT OR IGNORE INTO medical_diagnoses (name,icd10,onsetDate,resolvedDate,status,provider,notes)
+      VALUES (@name,@icd10,@onsetDate,@resolvedDate,@status,@provider,@notes)
+    `)
+    for (const d of diagnoses) insDx.run({
+      name: d.name, icd10: d.icd10 ?? '', onsetDate: d.onsetDate ?? null,
+      resolvedDate: d.resolvedDate ?? null, status: d.status ?? 'active',
+      provider: d.provider ?? '', notes: d.notes ?? '',
+    })
+
+    const insMed = req.db.prepare(`
+      INSERT OR IGNORE INTO medical_medications (name,dosage,instructions,startDate,endDate,status,prescriber,reason,notes)
+      VALUES (@name,@dosage,@instructions,@startDate,@endDate,@status,@prescriber,@reason,@notes)
+    `)
+    for (const m of medications) insMed.run({
+      name: m.name, dosage: m.dosage ?? '', instructions: m.instructions ?? '',
+      startDate: m.startDate ?? null, endDate: m.endDate ?? null,
+      status: m.status ?? 'active', prescriber: m.prescriber ?? '',
+      reason: m.reason ?? '', notes: m.notes ?? '',
+    })
+
+    const insProc = req.db.prepare(`
+      INSERT OR IGNORE INTO medical_procedures (name,procedureDate,status,provider,facility,notes)
+      VALUES (@name,@procedureDate,@status,@provider,@facility,@notes)
+    `)
+    for (const p of procedures) insProc.run({
+      name: p.name, procedureDate: p.procedureDate, status: p.status ?? 'completed',
+      provider: p.provider ?? '', facility: p.facility ?? '', notes: p.notes ?? '',
+    })
+  })
+
+  try {
+    doSeed()
+    res.json({ ok: true, seeded: { vitals: vitals.length, labs: labs.length, diagnoses: diagnoses.length, medications: medications.length, procedures: procedures.length } })
+  } catch (err) {
+    console.error('Medical seed error:', err.message)
     res.status(500).json({ error: err.message })
   }
 })

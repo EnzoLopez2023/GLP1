@@ -12,8 +12,9 @@ import SideEffects  from './pages/SideEffects'
 import Wellbeing    from './pages/Wellbeing'
 import Insights     from './pages/Insights'
 import Reports      from './pages/Reports'
-import KnowledgeBase from './pages/KnowledgeBase'
-import Settings     from './pages/Settings'
+import KnowledgeBase   from './pages/KnowledgeBase'
+import MedicalRecords  from './pages/MedicalRecords'
+import Settings        from './pages/Settings'
 import IntroAnimation from './components/motion/IntroAnimation'
 import OnboardingWizard from './components/onboarding/OnboardingWizard'
 import { ease } from './components/motion/primitives'
@@ -132,6 +133,7 @@ function AnimatedRoutes() {
           <Route path="/insights"    element={<Insights />} />
           <Route path="/reports"     element={<Reports />} />
           <Route path="/knowledge"   element={<KnowledgeBase />} />
+          <Route path="/medical"     element={<MedicalRecords />} />
           <Route path="/settings"    element={<Settings />} />
         </Routes>
       </motion.div>

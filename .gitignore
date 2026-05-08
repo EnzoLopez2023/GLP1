@@ -22,3 +22,6 @@ Thumbs.db
 
 # Misc
 _archive/
+
+# Private one-off scripts with personal medical data
+scripts/seed-medical-records.mjs

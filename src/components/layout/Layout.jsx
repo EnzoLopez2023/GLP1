@@ -26,8 +26,9 @@ const ROUTE_LABELS = [
   ['/wellbeing',   'Well-being'  ],
   ['/insights',    'Insights'    ],
   ['/reports',     'Reports'     ],
-  ['/knowledge',   'Learn'       ],
-  ['/settings',    'You'         ],
+  ['/knowledge',   'Learn'             ],
+  ['/medical',     'Medical Records'   ],
+  ['/settings',    'You'               ],
   ['/',            'Today'       ],
 ]
 

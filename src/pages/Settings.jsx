@@ -9,7 +9,7 @@ import Button from '../components/ui/Button'
 import { FormField, Input, Select, Textarea } from '../components/ui/FormField'
 import {
   Shield, Database, Download, Upload, AlertTriangle, CheckCircle,
-  Zap, LineChart, FileText, BookOpen, Salad, Activity, ChevronRight,
+  Zap, LineChart, FileText, BookOpen, Salad, Activity, ChevronRight, Stethoscope,
 } from 'lucide-react'
 import Modal from '../components/ui/Modal'
 import toast from 'react-hot-toast'
@@ -42,9 +42,10 @@ const HUB_SECTIONS = [
   {
     label: 'Analysis',
     items: [
-      { to: '/insights',    label: 'Insights',     sub: 'Stage analysis, trends, predictions', icon: LineChart, tone: '#ede5f4', color: '#4c1d95' },
-      { to: '/reports',     label: 'Reports',      sub: '30-day summary, exports',             icon: FileText,  tone: '#fce4d8', color: '#9a3412' },
-      { to: '/knowledge',   label: 'Learn',        sub: 'Knowledge base for GLP-1s',           icon: BookOpen,  tone: '#fbeed8', color: '#92521b' },
+      { to: '/insights',    label: 'Insights',         sub: 'Stage analysis, trends, predictions', icon: LineChart,    tone: '#ede5f4', color: '#4c1d95' },
+      { to: '/reports',     label: 'Reports',          sub: '30-day summary, exports',             icon: FileText,     tone: '#fce4d8', color: '#9a3412' },
+      { to: '/medical',     label: 'Medical Records',  sub: 'Labs, vitals, diagnoses, history',    icon: Stethoscope,  tone: '#dbeafe', color: '#1e40af' },
+      { to: '/knowledge',   label: 'Learn',            sub: 'Knowledge base for GLP-1s',           icon: BookOpen,     tone: '#fbeed8', color: '#92521b' },
     ],
   },
 ]

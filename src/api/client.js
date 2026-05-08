@@ -122,6 +122,14 @@ export const api = {
   exportData: () => get('/export'),
   importData: (data) => post('/import', data),
 
+  // ── Medical Records ───────────────────────────────────────────────────────
+  getMedicalVitals:      ()       => get('/medical/vitals'),
+  getMedicalLabs:        (panel)  => get('/medical/labs', panel ? { panel } : undefined),
+  getMedicalDiagnoses:   ()       => get('/medical/diagnoses'),
+  getMedicalMedications: ()       => get('/medical/medications'),
+  getMedicalProcedures:  ()       => get('/medical/procedures'),
+  seedMedicalRecords:    (data)   => post('/medical/seed', data),
+
   // ── AI ────────────────────────────────────────────────────────────────────
   getNutritionGlucoseInsight: (data) => post('/ai/nutrition-glucose-insight', data),
   askQuestion:                (data) => post('/ai/ask', data),
