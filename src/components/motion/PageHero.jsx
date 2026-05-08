@@ -28,6 +28,7 @@ const DURATIONS = {
   insights: 4200,
   reports:  3800,
   learn:    4200,
+  medical:  4000,
   default:  700,
 }
 
@@ -126,6 +127,7 @@ function Variant({ variant }) {
   if (variant === 'insights') return <InsightsScene />
   if (variant === 'reports')  return <ReportsScene />
   if (variant === 'learn')    return <LearnScene />
+  if (variant === 'medical')  return <MedicalScene />
   return null
 }
 
@@ -740,6 +742,150 @@ function LearnScene() {
         className="absolute bottom-8 text-sm text-wood-700"
       >
         Explore the science
+      </motion.p>
+    </div>
+  )
+}
+
+// ── MEDICAL: ECG trace draws across, real vitals + HbA1c pill in ─────────────
+// Beats:
+//   0 – 0.4s   : eyebrow + grid fade in
+//   0.35 – 2.0s: ECG line draws left-to-right (flatline → P wave → QRS → T wave → flatline)
+//   1.0 – 1.6s : area fill under trace fades in
+//   2.0 – 3.2s : three stat pills stagger in (HbA1c, BP, Weight) with real data
+//   3.2 – 3.8s : caption fades in
+function MedicalScene() {
+  const { data: vitalsRaw } = useQuery(api.getMedicalVitals)
+  const { data: labsRaw }   = useQuery(api.getMedicalLabs)
+
+  const vitals = vitalsRaw ?? []
+  const labs   = labsRaw   ?? []
+
+  const latestHbA1c = useMemo(() => {
+    const rows = labs
+      .filter(l => l.testName === 'HbA1c')
+      .sort((a, b) => b.collectedDate.localeCompare(a.collectedDate))
+    return rows[0]?.value != null ? `${rows[0].value}%` : '—'
+  }, [labs])
+
+  const latestBP = useMemo(() => {
+    if (!vitals.length) return '—'
+    const v = [...vitals].sort((a, b) => b.visitDate.localeCompare(a.visitDate))[0]
+    return v.bpSystolic ? `${v.bpSystolic}/${v.bpDiastolic}` : '—'
+  }, [vitals])
+
+  const latestWeight = useMemo(() => {
+    if (!vitals.length) return '—'
+    const v = [...vitals].sort((a, b) => b.visitDate.localeCompare(a.visitDate))[0]
+    return v.weightLbs ? `${Math.round(v.weightLbs * 10) / 10} lb` : '—'
+  }, [vitals])
+
+  const pills = [
+    { label: 'HbA1c',  value: latestHbA1c, color: '#7c3aed' },
+    { label: 'BP',     value: latestBP,     color: '#dc2626' },
+    { label: 'Weight', value: latestWeight, color: '#d97706' },
+  ]
+
+  // ECG path: flatline → P wave → PR → QRS complex → ST → T wave → flatline
+  const ecgPath = 'M 0,55 L 28,55 Q 36,43 44,55 L 64,55 L 68,64 L 74,7 L 80,67 L 86,55 L 118,55 Q 134,33 150,55 L 260,55'
+  const ecgFill = `${ecgPath} L 260,110 L 0,110 Z`
+
+  return (
+    <div className="relative w-[300px] h-[300px] flex items-center justify-center">
+
+      {/* Eyebrow */}
+      <motion.p
+        initial={{ opacity: 0, y: 6 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.4, delay: 0.1, ease: ease.outCubic }}
+        className="absolute top-0 text-[11px] font-bold uppercase tracking-[0.18em]"
+        style={{ color: '#1e40af' }}
+      >
+        Medical Records · Overview
+      </motion.p>
+
+      {/* ECG grid */}
+      <motion.svg
+        width="260" height="110" viewBox="0 0 260 110"
+        className="absolute" style={{ top: 42 }}
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        transition={{ duration: 0.4, delay: 0.2 }}
+      >
+        {[22, 44, 66, 88].map(y => (
+          <line key={y} x1="0" y1={y} x2="260" y2={y} stroke="#dbeafe" strokeWidth="0.8" />
+        ))}
+        {[0, 52, 104, 156, 208, 260].map(x => (
+          <line key={x} x1={x} y1="0" x2={x} y2="110" stroke="#dbeafe" strokeWidth="0.8" />
+        ))}
+      </motion.svg>
+
+      {/* ECG area fill + trace */}
+      <svg width="260" height="110" viewBox="0 0 260 110" className="absolute" style={{ top: 42 }}>
+        <defs>
+          <linearGradient id="ecg-fill" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor="#3b82f6" stopOpacity="0.12" />
+            <stop offset="100%" stopColor="#3b82f6" stopOpacity="0" />
+          </linearGradient>
+        </defs>
+
+        {/* Area fill, fades in after trace starts drawing */}
+        <motion.path
+          d={ecgFill}
+          fill="url(#ecg-fill)"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ duration: 0.7, delay: 1.0 }}
+        />
+
+        {/* ECG trace */}
+        <motion.path
+          d={ecgPath}
+          fill="none" stroke="#1e40af" strokeWidth="2.5"
+          strokeLinecap="round" strokeLinejoin="round"
+          initial={{ pathLength: 0, opacity: 0 }}
+          animate={{ pathLength: 1, opacity: 1 }}
+          transition={{
+            pathLength: { duration: 1.6, delay: 0.35, ease: ease.outCubic },
+            opacity:    { duration: 0.01, delay: 0.35 },
+          }}
+        />
+
+        {/* Endpoint dot pulses in when trace finishes */}
+        <motion.circle
+          cx="260" cy="55" r="5"
+          fill="#3b82f6"
+          initial={{ scale: 0, opacity: 0 }}
+          animate={{ scale: [0, 1.5, 1], opacity: [0, 1, 0.8] }}
+          style={{ transformOrigin: '260px 55px' }}
+          transition={{ duration: 0.5, delay: 1.92, ease: ease.outBack }}
+        />
+      </svg>
+
+      {/* Stat pills with real data */}
+      <div className="absolute flex gap-2.5" style={{ bottom: 64 }}>
+        {pills.map(({ label, value, color }, i) => (
+          <motion.div
+            key={label}
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.4, delay: 2.1 + i * 0.22, ease: ease.outCubic }}
+            className="flex flex-col items-center px-3.5 py-1.5 rounded-xl"
+            style={{ background: `${color}18` }}
+          >
+            <span className="text-base font-bold tabular-nums" style={{ color }}>{value}</span>
+            <span className="text-[10px] font-medium" style={{ color: `${color}aa` }}>{label}</span>
+          </motion.div>
+        ))}
+      </div>
+
+      <motion.p
+        initial={{ opacity: 0, y: 8 }}
+        animate={{ opacity: 0.9, y: 0 }}
+        transition={{ duration: 0.5, delay: 3.2, ease: ease.outCubic }}
+        className="absolute bottom-8 text-sm text-wood-700"
+      >
+        Your health history
       </motion.p>
     </div>
   )

@@ -8,6 +8,7 @@ import { api } from '../api/client'
 import { useQuery } from '../hooks/useQuery'
 import Card, { CardHeader } from '../components/ui/Card'
 import { Stagger, StaggerItem, FadeUp } from '../components/motion/primitives'
+import PageHero from '../components/motion/PageHero'
 import {
   Activity, FlaskConical, Pill, Stethoscope, ClipboardList,
   TrendingUp, TrendingDown, CheckCircle,
@@ -210,6 +211,7 @@ export default function MedicalRecords() {
   }
 
   return (
+    <PageHero variant="medical">
     <div className="space-y-5">
 
       {/* ── Tab bar ───────────────────────────────────────────────────────── */}
@@ -603,6 +605,7 @@ export default function MedicalRecords() {
         )}
       </AnimatePresence>
     </div>
+    </PageHero>
   )
 }
 
