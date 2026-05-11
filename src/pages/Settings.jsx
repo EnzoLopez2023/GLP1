@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { api } from '../api/client'
 import { useQuery } from '../hooks/useQuery'
@@ -10,6 +10,7 @@ import { FormField, Input, Select, Textarea } from '../components/ui/FormField'
 import {
   Shield, Database, Download, Upload, AlertTriangle, CheckCircle,
   Zap, LineChart, FileText, BookOpen, Salad, Activity, ChevronRight, Stethoscope,
+  Clock, Server,
 } from 'lucide-react'
 import Modal from '../components/ui/Modal'
 import toast from 'react-hot-toast'
@@ -332,7 +333,10 @@ export default function Settings() {
       </Button>
 
       {/* ── Backup & Restore ──────────────────────────────────────────────── */}
-      <BackupRestoreSection />
+      <BackupRestoreSection
+        lastBackupAt={settings?.lastBackupAt}
+        onBackupComplete={refetchSettings}
+      />
 
       {/* ── Privacy ───────────────────────────────────────────────────────── */}
       <Card>
@@ -358,30 +362,67 @@ export default function Settings() {
 
 // ── Backup & Restore ──────────────────────────────────────────────────────────
 
-function BackupRestoreSection() {
-  const [restoreModal, setRestoreModal] = useState(false)
-  const [restoreFile,  setRestoreFile]  = useState(null)
-  const [restoring,    setRestoring]    = useState(false)
-  const [downloading,  setDownloading]  = useState(false)
+function BackupRestoreSection({ lastBackupAt, onBackupComplete }) {
+  const [restoreModal,   setRestoreModal]   = useState(false)
+  const [restoreFile,    setRestoreFile]    = useState(null)
+  const [restoring,      setRestoring]      = useState(false)
+  const [downloading,    setDownloading]    = useState(false)
+  const [serverBackups,  setServerBackups]  = useState(null)   // null = not loaded yet
+  const [loadingBackups, setLoadingBackups] = useState(false)
+
+  const daysSinceBackup = useMemo(() => {
+    if (!lastBackupAt) return null
+    return Math.floor((Date.now() - new Date(lastBackupAt).getTime()) / 86_400_000)
+  }, [lastBackupAt])
+
+  // 'loading' while settings haven't arrived, then 'never' | 'ok' | 'warn' | 'overdue'
+  const backupStatus = lastBackupAt === undefined ? 'loading'
+    : !lastBackupAt                               ? 'never'
+    : daysSinceBackup < 7                         ? 'ok'
+    : daysSinceBackup < 14                        ? 'warn'
+    :                                               'overdue'
 
   async function handleBackup() {
     setDownloading(true)
     try {
       const data = await api.exportData()
-      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })
-      const url  = URL.createObjectURL(blob)
-      const a    = document.createElement('a')
-      const date = new Date().toISOString().slice(0, 10)
-      a.href     = url
-      a.download = `glp1-backup-${date}.json`
-      a.click()
-      URL.revokeObjectURL(url)
-      toast.success('Backup downloaded!')
+      triggerDownload(data, `glp1-backup-${new Date().toISOString().slice(0, 10)}.json`)
+      toast.success('Backup downloaded — all 16 tables included!')
+      onBackupComplete?.()
     } catch (err) {
       toast.error('Backup failed — ' + err.message)
     } finally {
       setDownloading(false)
     }
+  }
+
+  async function loadServerBackups() {
+    setLoadingBackups(true)
+    try {
+      setServerBackups(await api.listServerBackups())
+    } catch {
+      setServerBackups([])
+    } finally {
+      setLoadingBackups(false)
+    }
+  }
+
+  async function downloadServerBackup(date) {
+    try {
+      const data = await api.downloadServerBackup(date)
+      triggerDownload(data, `glp1-backup-${date}.json`)
+      toast.success(`Server backup ${date} downloaded!`)
+    } catch (err) {
+      toast.error('Download failed — ' + err.message)
+    }
+  }
+
+  function triggerDownload(data, filename) {
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })
+    const url  = URL.createObjectURL(blob)
+    const a    = document.createElement('a')
+    a.href = url; a.download = filename; a.click()
+    URL.revokeObjectURL(url)
   }
 
   function handleFileChange(e) {
@@ -390,17 +431,23 @@ function BackupRestoreSection() {
     if (!file.name.endsWith('.json')) { toast.error('Select a .json backup file'); return }
     setRestoreFile(file)
     setRestoreModal(true)
-    e.target.value = ''   // reset input so same file can be re-selected
+    e.target.value = ''
   }
 
   async function confirmRestore() {
     if (!restoreFile) return
     setRestoring(true)
     try {
-      const text = await restoreFile.text()
-      const data = JSON.parse(text)
-      await api.importData(data)
-      toast.success('Data restored! Reload the page to see your data.')
+      const data   = JSON.parse(await restoreFile.text())
+      const result = await api.importData(data)
+      if (result.warning) {
+        toast.error(result.warning, { duration: 7000 })
+      } else {
+        toast.success('Data restored! Reload to see your data.')
+      }
+      if (!result.medicalRestored) {
+        toast('Medical records not in this backup — existing records kept.', { icon: 'ℹ️', duration: 5000 })
+      }
       setRestoreModal(false)
       setRestoreFile(null)
     } catch (err) {
@@ -410,28 +457,53 @@ function BackupRestoreSection() {
     }
   }
 
+  // Color scheme per backup freshness
+  const scheme = {
+    ok:      { banner: 'bg-green-50 border border-green-200',  title: 'text-green-800', sub: 'text-green-600'  },
+    warn:    { banner: 'bg-amber-50 border border-amber-200',  title: 'text-amber-800', sub: 'text-amber-700'  },
+    never:   { banner: 'bg-red-50   border border-red-200',    title: 'text-red-800',   sub: 'text-red-700'    },
+    overdue: { banner: 'bg-red-50   border border-red-200',    title: 'text-red-800',   sub: 'text-red-700'    },
+    loading: { banner: 'bg-gray-50  border border-gray-200',   title: 'text-gray-600',  sub: 'text-gray-400'   },
+  }[backupStatus]
+
+  const reminderMsg = {
+    loading: ['Checking backup status…',                                       ''],
+    ok:      [`Last backup: ${daysSinceBackup === 0 ? 'today' : `${daysSinceBackup}d ago`}`, 'You\'re within the weekly window.'],
+    warn:    [`Last backup: ${daysSinceBackup} days ago`,                      'Recommended: download a fresh backup weekly.'],
+    never:   ['No backup downloaded yet',                                      'Download a backup now to protect your health data.'],
+    overdue: [`Backup overdue — ${daysSinceBackup} days since last`,           'Download a backup now to protect your health data.'],
+  }[backupStatus]
+
   return (
     <>
       <Card>
-        <CardHeader title="Backup & Restore" subtitle="All data including settings and photos" />
+        <CardHeader title="Backup & Restore" subtitle="All 16 tables — glucose, injections, weight, photos, medical records" />
         <div className="space-y-3">
 
-          {/* Backup */}
+          {/* Backup reminder banner */}
+          <div className={`flex items-center gap-3 p-3 rounded-xl ${scheme.banner}`}>
+            <Clock size={16} className={`shrink-0 ${scheme.title}`} />
+            <div className="flex-1 min-w-0">
+              <p className={`text-sm font-semibold ${scheme.title}`}>{reminderMsg[0]}</p>
+              {reminderMsg[1] && <p className={`text-xs mt-0.5 ${scheme.sub}`}>{reminderMsg[1]}</p>}
+            </div>
+          </div>
+
+          {/* Manual backup */}
           <div className="flex items-center justify-between p-3 bg-green-50 rounded-xl">
             <div>
               <p className="text-sm font-medium text-green-900">Download Backup</p>
               <p className="text-xs text-green-700 mt-0.5">
-                Exports all glucose, injections, nutrition, weight, photos, and settings to a JSON file.
+                Exports all 16 tables — glucose, injections, nutrition, weight, photos, medical records, and settings.
               </p>
             </div>
-            <Button size="sm" onClick={handleBackup} disabled={downloading}
-              className="shrink-0 ml-3">
+            <Button size="sm" onClick={handleBackup} disabled={downloading} className="shrink-0 ml-3">
               <Download size={14} />
               {downloading ? 'Exporting…' : 'Backup'}
             </Button>
           </div>
 
-          {/* Restore */}
+          {/* Restore from file */}
           <div className="flex items-center justify-between p-3 bg-orange-50 rounded-xl">
             <div>
               <p className="text-sm font-medium text-orange-900">Restore from Backup</p>
@@ -450,6 +522,40 @@ function BackupRestoreSection() {
             </label>
           </div>
 
+          {/* Server-side backup list */}
+          <div className="border-t border-wood-100 pt-3">
+            <div className="flex items-center justify-between mb-2">
+              <div className="flex items-center gap-1.5">
+                <Server size={13} className="text-gray-500" />
+                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Daily Server Backups</p>
+              </div>
+              <button onClick={loadServerBackups} disabled={loadingBackups}
+                className="text-xs text-brand-600 hover:text-brand-700 font-medium disabled:opacity-50">
+                {loadingBackups ? 'Loading…' : serverBackups === null ? 'Show' : 'Refresh'}
+              </button>
+            </div>
+
+            {serverBackups !== null && (
+              serverBackups.length === 0
+                ? <p className="text-xs text-gray-400 text-center py-2 italic">No server backups yet. First backup runs 10 s after container starts.</p>
+                : <div className="space-y-1">
+                    {serverBackups.map(b => (
+                      <div key={b.date} className="flex items-center justify-between px-2.5 py-2 rounded-lg bg-gray-50 hover:bg-gray-100 transition-colors">
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs font-medium text-gray-700">{b.date}</span>
+                          <span className="text-[10px] text-gray-400">{(b.size / 1024).toFixed(0)} KB</span>
+                        </div>
+                        <button onClick={() => downloadServerBackup(b.date)}
+                          className="text-xs text-brand-600 hover:text-brand-700 font-semibold">
+                          Download
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+            )}
+            <p className="text-xs text-gray-400 mt-2">Server keeps 14 rolling daily backups, separate from manual downloads.</p>
+          </div>
+
         </div>
       </Card>
 
@@ -464,7 +570,7 @@ function BackupRestoreSection() {
               <p className="text-xs text-red-700 mt-1">
                 Every glucose reading, injection, weight log, meal, photo, and setting will be
                 overwritten by the contents of <strong>{restoreFile?.name}</strong>.
-                This action cannot be undone.
+                This cannot be undone.
               </p>
             </div>
           </div>
@@ -475,8 +581,7 @@ function BackupRestoreSection() {
             </p>
           </div>
           <div className="flex gap-2 justify-end pt-1">
-            <Button variant="secondary"
-              onClick={() => { setRestoreModal(false); setRestoreFile(null) }}>
+            <Button variant="secondary" onClick={() => { setRestoreModal(false); setRestoreFile(null) }}>
               Cancel
             </Button>
             <Button variant="danger" onClick={confirmRestore} disabled={restoring}>

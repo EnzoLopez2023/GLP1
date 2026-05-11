@@ -119,8 +119,10 @@ export const api = {
   deletePhoto:  (id)   => del(`/photos/${id}`),
 
   // ── Export / Import ───────────────────────────────────────────────────────
-  exportData: () => get('/export'),
-  importData: (data) => post('/import', data),
+  exportData:           ()     => get('/export'),
+  importData:           (data) => post('/import', data),
+  listServerBackups:    ()     => get('/backup/list'),
+  downloadServerBackup: (date) => get(`/backup/download/${date}`),
 
   // ── Medical Records ───────────────────────────────────────────────────────
   getMedicalVitals:      ()       => get('/medical/vitals'),

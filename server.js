@@ -3,7 +3,7 @@ import cors from 'cors'
 import Database from 'better-sqlite3'
 import { fileURLToPath } from 'url'
 import { dirname, join } from 'path'
-import { existsSync, mkdirSync, renameSync } from 'node:fs'
+import { existsSync, mkdirSync, renameSync, writeFileSync, readFileSync, readdirSync, unlinkSync, statSync } from 'node:fs'
 import { jwtVerify, createRemoteJWKSet } from 'jose'
 import dotenv from 'dotenv'
 import Anthropic from '@anthropic-ai/sdk'
@@ -20,6 +20,7 @@ const __dirname  = dirname(__filename)
 // ── Config ────────────────────────────────────────────────────────────────────
 const PORT             = process.env.PORT             ?? 3004
 const USERS_DIR        = process.env.USERS_DIR        ?? join(__dirname, 'data', 'users')
+const BACKUPS_DIR      = process.env.BACKUPS_DIR      ?? join(__dirname, 'data', 'backups')
 const LEGACY_DB_PATH   = process.env.LEGACY_DB_PATH   ?? process.env.DB_PATH ?? join(__dirname, 'glp1.db')
 const AAD_TENANT_ID    = process.env.AAD_TENANT_ID
 const AAD_CLIENT_ID    = process.env.AAD_CLIENT_ID
@@ -226,6 +227,7 @@ function applyMigrations(db) {
     try { db.exec(`ALTER TABLE profile ADD COLUMN ${col}`) } catch { /* already exists */ }
   })
   try { db.exec('ALTER TABLE settings ADD COLUMN carbGoalG REAL DEFAULT 20') } catch { /* already exists */ }
+  try { db.exec('ALTER TABLE settings ADD COLUMN lastBackupAt TEXT') } catch { /* already exists */ }
 }
 
 // ── Per-user DB resolution ───────────────────────────────────────────────────
@@ -571,27 +573,17 @@ app.delete('/api/photos/:id', (req, res) => {
 
 // ── Export / Import ───────────────────────────────────────────────────────────
 app.get('/api/export', (req, res) => {
-  const data = {
-    exportedAt:  new Date().toISOString(),
-    version:     1,
-    profile:     req.db.prepare('SELECT * FROM profile').all(),
-    settings:    req.db.prepare('SELECT * FROM settings').all(),
-    injections:  req.db.prepare('SELECT * FROM injections').all(),
-    sideEffects: req.db.prepare('SELECT * FROM sideEffects').all(),
-    nutrition:   req.db.prepare('SELECT * FROM nutrition').all(),
-    meals:       req.db.prepare('SELECT * FROM meals').all(),
-    glucose:     req.db.prepare('SELECT * FROM glucose').all(),
-    weightLog:   req.db.prepare('SELECT * FROM weightLog').all(),
-    measurements:req.db.prepare('SELECT * FROM measurements').all(),
-    wellbeing:   req.db.prepare('SELECT * FROM wellbeing').all(),
-    photos:      req.db.prepare('SELECT * FROM photos').all(),
-  }
+  const data = exportDbData(req.db)
+  req.db.prepare('UPDATE settings SET lastBackupAt=? WHERE id=1').run(new Date().toISOString())
   res.setHeader('Content-Disposition', `attachment; filename="glp1-export-${today()}.json"`)
   res.json(data)
 })
 
 app.post('/api/import', (req, res) => {
   const t = req.body
+
+  // v2 backups include medical tables; v1 backups do not — preserve existing medical data for v1
+  const hasMedical = !!(t.medical_vitals || t.medical_lab_results || t.medical_diagnoses)
 
   const importAll = req.db.transaction(() => {
     const tables = [
@@ -612,22 +604,45 @@ app.post('/api/import', (req, res) => {
       photos:       t.photos,
     }
 
+    if (hasMedical) {
+      for (const tbl of ['medical_vitals','medical_lab_results','medical_diagnoses','medical_medications','medical_procedures']) {
+        req.db.prepare(`DELETE FROM ${tbl}`).run()
+      }
+      Object.assign(tableMap, {
+        medical_vitals:      t.medical_vitals,
+        medical_lab_results: t.medical_lab_results,
+        medical_diagnoses:   t.medical_diagnoses,
+        medical_medications: t.medical_medications,
+        medical_procedures:  t.medical_procedures,
+      })
+    }
+
     for (const [tbl, rows] of Object.entries(tableMap)) {
       if (!rows?.length) continue
-      // Build INSERT from the actual keys present in the first row
-      const cols  = Object.keys(rows[0])
-      const ph    = cols.map(() => '?').join(',')
-      const stmt  = req.db.prepare(`INSERT OR REPLACE INTO ${tbl} (${cols.join(',')}) VALUES (${ph})`)
+      const cols = Object.keys(rows[0])
+      const ph   = cols.map(() => '?').join(',')
+      const stmt = req.db.prepare(`INSERT OR REPLACE INTO ${tbl} (${cols.join(',')}) VALUES (${ph})`)
       for (const row of rows) stmt.run(cols.map(c => row[c] ?? null))
     }
 
-    // Singleton rows
+    // Profile — merge backup with current to protect required fields from null overwrite.
+    // A restored backup with missing name/age/etc. should never wipe a working profile.
     if (t.profile?.[0]) {
-      const row  = t.profile[0]
-      const cols = Object.keys(row)
+      const existing = req.db.prepare('SELECT * FROM profile WHERE id=1').get() ?? {}
+      const backup   = t.profile[0]
+      const merged   = {
+        ...backup,
+        name:          backup.name          || existing.name          || '',
+        age:           backup.age           ?? existing.age           ?? null,
+        heightIn:      backup.heightIn      ?? existing.heightIn      ?? null,
+        weightLbs:     backup.weightLbs     ?? existing.weightLbs     ?? null,
+        goalWeightLbs: backup.goalWeightLbs ?? existing.goalWeightLbs ?? null,
+      }
+      const cols = Object.keys(merged)
       const ph   = cols.map(() => '?').join(',')
-      req.db.prepare(`INSERT OR REPLACE INTO profile (${cols.join(',')}) VALUES (${ph})`).run(cols.map(c => row[c] ?? null))
+      req.db.prepare(`INSERT OR REPLACE INTO profile (${cols.join(',')}) VALUES (${ph})`).run(cols.map(c => merged[c] ?? null))
     }
+
     if (t.settings?.[0]) {
       const row  = t.settings[0]
       const cols = Object.keys(row)
@@ -638,11 +653,47 @@ app.post('/api/import', (req, res) => {
 
   try {
     importAll()
-    res.json({ ok: true })
+    const profile    = req.db.prepare('SELECT * FROM profile WHERE id=1').get()
+    const profileOk  = !!(profile?.name && profile?.age != null && profile?.heightIn != null && profile?.weightLbs != null && profile?.goalWeightLbs != null)
+    res.json({
+      ok:              true,
+      profileComplete: profileOk,
+      medicalRestored: hasMedical,
+      warning: profileOk ? null : 'Profile is missing required fields (name, age, height, weight, goal weight). Please update your profile in Settings.',
+    })
   } catch (err) {
     console.error('Import error:', err.message)
     res.status(500).json({ error: err.message })
   }
+})
+
+// ── Server-side backups ───────────────────────────────────────────────────────
+app.get('/api/backup/list', (req, res) => {
+  const userDir = join(BACKUPS_DIR, req.userId)
+  if (!existsSync(userDir)) return res.json([])
+  try {
+    const files = readdirSync(userDir)
+      .filter(f => f.endsWith('.json'))
+      .sort()
+      .reverse()
+      .slice(0, 14)
+    res.json(files.map(f => ({
+      date: f.replace('.json', ''),
+      size: statSync(join(userDir, f)).size,
+    })))
+  } catch { res.json([]) }
+})
+
+app.get('/api/backup/download/:date', (req, res) => {
+  const { date } = req.params
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return res.status(400).json({ error: 'invalid date' })
+  const filePath = join(BACKUPS_DIR, req.userId, `${date}.json`)
+  if (!existsSync(filePath)) return res.status(404).json({ error: 'backup not found' })
+  try {
+    const data = JSON.parse(readFileSync(filePath, 'utf8'))
+    res.setHeader('Content-Disposition', `attachment; filename="glp1-backup-${date}.json"`)
+    res.json(data)
+  } catch { res.status(500).json({ error: 'failed to read backup' }) }
 })
 
 // ── Medical Records ───────────────────────────────────────────────────────────
@@ -872,3 +923,60 @@ function today() {
 function pick(obj, keys) {
   return Object.fromEntries(keys.map(k => [k, obj[k] ?? null]))
 }
+
+// ── Export helper — all 16 tables (v2 format) ─────────────────────────────────
+function exportDbData(db) {
+  return {
+    exportedAt:          new Date().toISOString(),
+    version:             2,
+    profile:             db.prepare('SELECT * FROM profile').all(),
+    settings:            db.prepare('SELECT * FROM settings').all(),
+    injections:          db.prepare('SELECT * FROM injections').all(),
+    sideEffects:         db.prepare('SELECT * FROM sideEffects').all(),
+    nutrition:           db.prepare('SELECT * FROM nutrition').all(),
+    meals:               db.prepare('SELECT * FROM meals').all(),
+    glucose:             db.prepare('SELECT * FROM glucose').all(),
+    weightLog:           db.prepare('SELECT * FROM weightLog').all(),
+    measurements:        db.prepare('SELECT * FROM measurements').all(),
+    wellbeing:           db.prepare('SELECT * FROM wellbeing').all(),
+    photos:              db.prepare('SELECT * FROM photos').all(),
+    medical_vitals:      db.prepare('SELECT * FROM medical_vitals').all(),
+    medical_lab_results: db.prepare('SELECT * FROM medical_lab_results').all(),
+    medical_diagnoses:   db.prepare('SELECT * FROM medical_diagnoses').all(),
+    medical_medications: db.prepare('SELECT * FROM medical_medications').all(),
+    medical_procedures:  db.prepare('SELECT * FROM medical_procedures').all(),
+  }
+}
+
+// ── Server-side backup helpers (14-day retention) ─────────────────────────────
+function backupUserDb(oid, db) {
+  const userDir = join(BACKUPS_DIR, oid)
+  mkdirSync(userDir, { recursive: true })
+  const date = today()
+  writeFileSync(join(userDir, `${date}.json`), JSON.stringify(exportDbData(db)))
+  // Prune files older than 14 days
+  const cutoff = new Date()
+  cutoff.setDate(cutoff.getDate() - 14)
+  const threshold = cutoff.toISOString().slice(0, 10)
+  for (const f of readdirSync(userDir).filter(f => f.endsWith('.json'))) {
+    if (f.replace('.json', '') < threshold) {
+      try { unlinkSync(join(userDir, f)) } catch { /* tolerated */ }
+    }
+  }
+  console.log(`[backup] ${oid} → ${date}.json`)
+}
+
+function runDailyBackups() {
+  for (const [oid, db] of dbHandles.entries()) {
+    try { backupUserDb(oid, db) } catch (err) { console.error(`[backup] failed for ${oid}:`, err.message) }
+  }
+}
+
+// Run once 10 s after boot (gives DBs time to open on first request), then daily at 2 AM.
+setTimeout(runDailyBackups, 10_000)
+;(function scheduleDailyAt2am() {
+  const now = new Date(), next = new Date(now)
+  next.setHours(2, 0, 0, 0)
+  if (next <= now) next.setDate(next.getDate() + 1)
+  setTimeout(() => { runDailyBackups(); setInterval(runDailyBackups, 86_400_000) }, next - now)
+})()
