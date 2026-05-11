@@ -349,11 +349,16 @@ app.get('/api/profile', (req, res) => {
 })
 
 app.put('/api/profile', (req, res) => {
-  const cols = ['name','age','weightLbs','heightIn','goalWeightLbs','medicationName',
+  const all  = ['name','age','weightLbs','heightIn','goalWeightLbs','medicationName',
                 'startingDoseMg','currentDoseMg','escalationSchedule','startDate',
                 'diagnosisDate','ketoStartDate','appointmentDate','injectionDay','injectionTime','notes']
-  const sets = cols.map(c => `${c}=@${c}`).join(',')
-  req.db.prepare(`UPDATE profile SET ${sets} WHERE id=1`).run(pick(req.body, cols))
+  // Only update columns explicitly present in the body — missing keys are preserved in the DB.
+  // This prevents partial callers (e.g. onboarding wizard) from wiping fields they didn't send.
+  const cols = all.filter(c => req.body[c] !== undefined)
+  if (cols.length > 0) {
+    const sets = cols.map(c => `${c}=@${c}`).join(',')
+    req.db.prepare(`UPDATE profile SET ${sets} WHERE id=1`).run(pick(req.body, cols))
+  }
   res.json(req.db.prepare('SELECT * FROM profile WHERE id=1').get())
 })
 
