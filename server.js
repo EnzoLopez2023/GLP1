@@ -826,7 +826,7 @@ app.post('/api/ai/nutrition-glucose-insight', async (req, res) => {
 
   try {
     const msg = await anthropic.messages.create({
-      model: 'claude-haiku-4-5-20251001',
+      model: 'claude-sonnet-4-6',
       max_tokens: 400,
       messages: [{
         role: 'user',
@@ -885,7 +885,7 @@ app.post('/api/ai/ask', async (req, res) => {
 
   try {
     const msg = await anthropic.messages.create({
-      model: 'claude-haiku-4-5-20251001',
+      model: 'claude-sonnet-4-6',
       max_tokens: 600,
       system: `You are a knowledgeable, encouraging health educator who specializes in Type 2 diabetes, GLP-1 medications, and ketogenic diets. You give clear, plain-English explanations grounded in science, tailored to someone who is newly diagnosed and learning. You are warm and supportive, never alarmist. You do not give medical advice or recommend specific medications — you educate and explain the science. When relevant, connect your answer to the user's specific situation using the context provided. Keep answers focused and practical, under 150 words. No markdown formatting, plain paragraphs only.`,
       messages: [{
