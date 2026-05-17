@@ -1,12 +1,14 @@
 # GitHub Actions deploy for GLP-1 (Tare) to Azure App Service.
 #
-# This replaces the previous local-Docker workflow. The flow is now:
-#   self-hosted Windows runner -> az acr build (server-side in ACR)
-#   -> az webapp restart -> health-check loop.
+# Authenticates to Azure via OIDC federated credentials (no static secrets).
+# The Entra app `github-glp1-ci` (appId aea19703-...) trusts tokens minted
+# by GitHub Actions for this repo's master branch only. Token exchange is
+# handled by azure/login@v2.
 #
-# DO NOT re-derive the Windows-specific hardening below — every quirk was
-# discovered during the Workshop/ShopKeep migrations (see
-# C:\Source\Repo\azure-infra\MIGRATION_RCA.md issues #3, #4, #8a, #8b, #8c).
+# DO NOT re-derive the Windows-specific quirks below (cmd /c wrapper for
+# the Vite Unicode CLI crash, curl --fail health check) — every quirk was
+# discovered during the Workshop/ShopKeep migrations
+# (C:\Source\Repo\azure-infra\MIGRATION_RCA.md issues #3, #4, #8b, #8c).
 
 name: Build & Deploy GLP-1 to Azure
 
@@ -23,13 +25,21 @@ concurrency:
   group: deploy-glp1
   cancel-in-progress: false
 
+permissions:
+  id-token: write   # required so azure/login@v2 can request the OIDC JWT
+  contents: read
+
 env:
   RG: rg-personal-apps-prod
   ACR: acrenzolopez01
   IMAGE: glp1:latest
   WEBAPP: app-glp1-prod-lwxhu7jxlrbtu
-  # Vite-baked AAD identifiers. GLP-1 uses VITE_AAD_* (NOT VITE_AZURE_*).
-  # Pass these to az acr build below; they are NOT App Service settings.
+  # SP for OIDC auth — these IDs are public; only the federated credential
+  # on the Entra app makes them usable, and only from this repo's master.
+  AZURE_CLIENT_ID:       aea19703-bad3-4106-954a-29daaf03040f
+  AZURE_TENANT_ID:       de625678-c55b-4494-9558-14946cbb6133
+  AZURE_SUBSCRIPTION_ID: 1cf02211-8d77-4658-bb6a-0f83ec831c3b
+  # Vite-baked AAD identifiers (Entra tenant for the user-facing app reg)
   VITE_AAD_CLIENT_ID: a38cd69e-8260-4b35-88f8-b93d2722cb41
   VITE_AAD_TENANT_ID: 52188f12-db6b-46c6-88ff-08c802f0ed3b
 
@@ -47,20 +57,18 @@ jobs:
           git fetch --all --prune
           git reset --hard origin/master
 
-      - name: Confirm Azure session
-        # If this fails with "az not recognized", az isn't on the MACHINE
-        # PATH at runner-start time. Add system-wide then restart the
-        # runner service so it picks up the new env (MIGRATION_RCA.md #8a).
-        run: |
-          $sub = (az account show --query id -o tsv)
-          if (-not $sub) { throw "az is not logged in on this runner" }
-          Write-Host "Subscription: $sub"
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id:       ${{ env.AZURE_CLIENT_ID }}
+          tenant-id:       ${{ env.AZURE_TENANT_ID }}
+          subscription-id: ${{ env.AZURE_SUBSCRIPTION_ID }}
 
       - name: Build image in ACR
         # ACR builds server-side; no Docker on the runner. The cmd.exe
-        # wrapper + `& exit 0` swallows the Windows az CLI Unicode crash on
-        # Vite's tick character (MIGRATION_RCA.md #4 / #8b). Real verification
-        # is the next step's health check.
+        # wrapper + `& exit 0` swallows the Windows az CLI Unicode crash
+        # on Vite's tick char (MIGRATION_RCA.md #4 / #8b). The next step's
+        # health check is the real verification.
         run: |
           cmd /c "az acr build --registry $env:ACR --image $env:IMAGE --build-arg VITE_AAD_CLIENT_ID=$env:VITE_AAD_CLIENT_ID --build-arg VITE_AAD_TENANT_ID=$env:VITE_AAD_TENANT_ID . > nul 2>&1 & exit 0"
           Write-Host "az acr build returned. Image push verified by next step's health check."
@@ -73,7 +81,6 @@ jobs:
       - name: Wait for app to come up
         # B1 cold start (Docker pull + Node boot) reliably 2-4 min.
         # curl --fail beats Invoke-WebRequest on TLS edge cases.
-        # (MIGRATION_RCA.md #8c.)
         run: |
           $url = "https://$env:WEBAPP.azurewebsites.net/api/health"
           $ok = $false
