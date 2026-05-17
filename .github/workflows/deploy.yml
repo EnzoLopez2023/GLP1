@@ -48,30 +48,12 @@ jobs:
           git reset --hard origin/master
 
       - name: Confirm Azure session
+        # If this fails with "az not recognized", az isn't on the MACHINE
+        # PATH at runner-start time. Add system-wide then restart the
+        # runner service so it picks up the new env (MIGRATION_RCA.md #8a).
         run: |
-          $log = "C:\actions-runner\GLP1\last-diagnostic.txt"
-          $sb = New-Object System.Text.StringBuilder
-          [void]$sb.AppendLine("=== Diagnostic captured $(Get-Date -Format o) ===")
-          [void]$sb.AppendLine("WHOAMI: $(whoami)")
-          [void]$sb.AppendLine("USERPROFILE: $env:USERPROFILE")
-          [void]$sb.AppendLine("USERNAME: $env:USERNAME")
-          [void]$sb.AppendLine("AZURE_CONFIG_DIR (env): $env:AZURE_CONFIG_DIR")
-          [void]$sb.AppendLine("az path: $((Get-Command az -ErrorAction SilentlyContinue).Source)")
-          [void]$sb.AppendLine("")
-          [void]$sb.AppendLine(".azure dir existence:")
-          @("$env:USERPROFILE\.azure", "C:\Users\enzol\.azure") | Sort-Object -Unique | ForEach-Object {
-            if (Test-Path $_) { [void]$sb.AppendLine("  EXISTS: $_ ($((Get-ChildItem $_ -ErrorAction SilentlyContinue | Measure-Object).Count) files)") }
-            else { [void]$sb.AppendLine("  MISSING: $_") }
-          }
-          [void]$sb.AppendLine("")
-          [void]$sb.AppendLine("az account show (stdout+stderr):")
-          $out = (az account show 2>&1 | Out-String)
-          [void]$sb.AppendLine("  exit: $LASTEXITCODE")
-          [void]$sb.AppendLine($out)
-          $sb.ToString() | Out-File -FilePath $log -Encoding utf8
-          Get-Content $log | ForEach-Object { Write-Host $_ }
-          $sub = (az account show --query id -o tsv 2>$null)
-          if (-not $sub) { throw "az is not logged in on this runner — see $log" }
+          $sub = (az account show --query id -o tsv)
+          if (-not $sub) { throw "az is not logged in on this runner" }
           Write-Host "Subscription: $sub"
 
       - name: Build image in ACR
