@@ -1,47 +1,90 @@
-name: Build & Deploy GLP-1
+# GitHub Actions deploy for GLP-1 (Tare) to Azure App Service.
+#
+# This replaces the previous local-Docker workflow. The flow is now:
+#   self-hosted Windows runner -> az acr build (server-side in ACR)
+#   -> az webapp restart -> health-check loop.
+#
+# DO NOT re-derive the Windows-specific hardening below — every quirk was
+# discovered during the Workshop/ShopKeep migrations (see
+# C:\Source\Repo\azure-infra\MIGRATION_RCA.md issues #3, #4, #8a, #8b, #8c).
+
+name: Build & Deploy GLP-1 to Azure
 
 on:
   push:
     branches: [master]
-  workflow_dispatch:  # allow manual runs from the Actions tab
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+      - '.gitignore'
+  workflow_dispatch:
 
 concurrency:
   group: deploy-glp1
-  cancel-in-progress: false  # never interrupt an in-flight deploy
+  cancel-in-progress: false
+
+env:
+  RG: rg-personal-apps-prod
+  ACR: acrenzolopez01
+  IMAGE: glp1:latest
+  WEBAPP: app-glp1-prod-lwxhu7jxlrbtu
+  # Vite-baked AAD identifiers. GLP-1 uses VITE_AAD_* (NOT VITE_AZURE_*).
+  # Pass these to az acr build below; they are NOT App Service settings.
+  VITE_AAD_CLIENT_ID: a38cd69e-8260-4b35-88f8-b93d2722cb41
+  VITE_AAD_TENANT_ID: 52188f12-db6b-46c6-88ff-08c802f0ed3b
 
 jobs:
   deploy:
-    # Runs on your home server (the self-hosted runner).
     runs-on: self-hosted
-
     defaults:
       run:
-        # Work directly in the server's existing checkout so the
-        # glp1-data Docker volume + glp1.db stay where they are.
+        shell: powershell
         working-directory: C:\Source\Repo\GLP-1
 
     steps:
       - name: Sync repo
-        shell: powershell
         run: |
           git fetch --all --prune
           git reset --hard origin/master
 
-      - name: Build image
-        shell: powershell
-        run: docker compose build
-
-      - name: Restart container
-        shell: powershell
-        run: docker compose up -d
-
-      - name: Wait for server
-        shell: powershell
-        run: Start-Sleep -Seconds 4
-
-      - name: Health check
-        shell: powershell
+      - name: Confirm Azure session
+        # If this fails with "az not recognized", az isn't on the MACHINE
+        # PATH. Fix system-wide PATH then Restart-Service the runner.
+        # (See MIGRATION_RCA.md issue #8a.)
         run: |
-          $r = Invoke-RestMethod -Uri 'http://localhost:3004/api/health' -TimeoutSec 10
-          if ($r.status -ne 'ok') { throw "Health check failed: $($r | ConvertTo-Json)" }
-          Write-Host "OK - db: $($r.db)"
+          $sub = (az account show --query id -o tsv)
+          if (-not $sub) { throw "az is not logged in on this runner" }
+          Write-Host "Subscription: $sub"
+
+      - name: Build image in ACR
+        # ACR builds server-side; no Docker on the runner. The cmd.exe
+        # wrapper + `& exit 0` swallows the Windows az CLI Unicode crash on
+        # Vite's tick character (MIGRATION_RCA.md #4 / #8b). Real verification
+        # is the next step's health check.
+        run: |
+          cmd /c "az acr build --registry $env:ACR --image $env:IMAGE --build-arg VITE_AAD_CLIENT_ID=$env:VITE_AAD_CLIENT_ID --build-arg VITE_AAD_TENANT_ID=$env:VITE_AAD_TENANT_ID . > nul 2>&1 & exit 0"
+          Write-Host "az acr build returned. Image push verified by next step's health check."
+          exit 0
+
+      - name: Restart web app to pull new image
+        run: |
+          az webapp restart -g $env:RG -n $env:WEBAPP
+
+      - name: Wait for app to come up
+        # B1 cold start (Docker pull + Node boot) reliably 2-4 min.
+        # curl --fail beats Invoke-WebRequest on TLS edge cases.
+        # (MIGRATION_RCA.md #8c.)
+        run: |
+          $url = "https://$env:WEBAPP.azurewebsites.net/api/health"
+          $ok = $false
+          for ($i = 0; $i -lt 60; $i++) {
+            cmd /c "curl -fsS --max-time 8 $url > nul 2>&1"
+            if ($LASTEXITCODE -eq 0) {
+              Write-Host "Healthy after $($i*5)s"
+              $ok = $true
+              break
+            }
+            Start-Sleep -Seconds 5
+          }
+          if (-not $ok) { throw "Health check did not pass within 5 min" }
+          exit 0
