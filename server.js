@@ -916,6 +916,7 @@ app.use((err, req, res, next) => {
 app.listen(PORT, () => {
   console.log(`Tare/GLP-1 Tracker running on port ${PORT}`)
   console.log(`Per-user DBs at: ${USERS_DIR}`)
+  console.log(`Daily backups at: ${BACKUPS_DIR}`)
   console.log(`Tenant: ${AAD_TENANT_ID}, Client: ${AAD_CLIENT_ID}`)
   if (PRIMARY_USER_OID) console.log(`Legacy migration armed for oid ${PRIMARY_USER_OID}`)
 })
