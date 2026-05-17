@@ -1,14 +1,6 @@
-# GitHub Actions deploy for GLP-1 (Tare) to Azure App Service.
-#
-# Authenticates to Azure via OIDC federated credentials (no static secrets).
-# The Entra app `github-glp1-ci` (appId aea19703-...) trusts tokens minted
-# by GitHub Actions for this repo's master branch only. Token exchange is
-# handled by azure/login@v2.
-#
-# DO NOT re-derive the Windows-specific quirks below (cmd /c wrapper for
-# the Vite Unicode CLI crash, curl --fail health check) — every quirk was
-# discovered during the Workshop/ShopKeep migrations
-# (C:\Source\Repo\azure-infra\MIGRATION_RCA.md issues #3, #4, #8b, #8c).
+# GitHub Actions deploy for GLP-1 → Azure App Service (Linux containers).
+# Runs on a GitHub-hosted ubuntu-latest runner — no self-hosted runner needed.
+# Azure auth uses OIDC federated credentials (no static secrets, no DPAPI).
 
 name: Build & Deploy GLP-1 to Azure
 
@@ -25,37 +17,34 @@ concurrency:
   group: deploy-glp1
   cancel-in-progress: false
 
+# Required for azure/login@v2 to request an OIDC JWT from GitHub.
 permissions:
-  id-token: write   # required so azure/login@v2 can request the OIDC JWT
+  id-token: write
   contents: read
 
 env:
-  RG: rg-personal-apps-prod
-  ACR: acrenzolopez01
-  IMAGE: glp1:latest
+  RG:     rg-personal-apps-prod
+  ACR:    acrenzolopez01
+  IMAGE:  glp1:latest
   WEBAPP: app-glp1-prod-lwxhu7jxlrbtu
-  # SP for OIDC auth — these IDs are public; only the federated credential
-  # on the Entra app makes them usable, and only from this repo's master.
+
+  # OIDC SP — these IDs are NOT secrets; the federated credential scopes them
+  # to this repo + branch only (MIGRATION_RCA.md #9).
   AZURE_CLIENT_ID:       aea19703-bad3-4106-954a-29daaf03040f
   AZURE_TENANT_ID:       de625678-c55b-4494-9558-14946cbb6133
   AZURE_SUBSCRIPTION_ID: 1cf02211-8d77-4658-bb6a-0f83ec831c3b
-  # Vite-baked AAD identifiers (Entra tenant for the user-facing app reg)
+
+  # Vite-baked AAD identifiers (Entra tenant for the user-facing app reg).
   VITE_AAD_CLIENT_ID: a38cd69e-8260-4b35-88f8-b93d2722cb41
   VITE_AAD_TENANT_ID: 52188f12-db6b-46c6-88ff-08c802f0ed3b
 
 jobs:
   deploy:
-    runs-on: self-hosted
-    defaults:
-      run:
-        shell: powershell
-        working-directory: C:\Source\Repo\GLP-1
+    runs-on: ubuntu-latest
 
     steps:
-      - name: Sync repo
-        run: |
-          git fetch --all --prune
-          git reset --hard origin/master
+      - name: Checkout
+        uses: actions/checkout@v4
 
       - name: Azure login (OIDC)
         uses: azure/login@v2
@@ -65,33 +54,30 @@ jobs:
           subscription-id: ${{ env.AZURE_SUBSCRIPTION_ID }}
 
       - name: Build image in ACR
-        # ACR builds server-side; no Docker on the runner. The cmd.exe
-        # wrapper + `& exit 0` swallows the Windows az CLI Unicode crash
-        # on Vite's tick char (MIGRATION_RCA.md #4 / #8b). The next step's
-        # health check is the real verification.
+        # ACR builds server-side — no Docker daemon needed on the runner.
+        # VITE_* vars must be baked in at build time (MIGRATION_RCA.md #3).
         run: |
-          cmd /c "az acr build --registry $env:ACR --image $env:IMAGE --build-arg VITE_AAD_CLIENT_ID=$env:VITE_AAD_CLIENT_ID --build-arg VITE_AAD_TENANT_ID=$env:VITE_AAD_TENANT_ID . > nul 2>&1 & exit 0"
-          Write-Host "az acr build returned. Image push verified by next step's health check."
-          exit 0
+          az acr build \
+            --registry "$ACR" \
+            --image "$IMAGE" \
+            --build-arg "VITE_AAD_CLIENT_ID=$VITE_AAD_CLIENT_ID" \
+            --build-arg "VITE_AAD_TENANT_ID=$VITE_AAD_TENANT_ID" \
+            .
 
       - name: Restart web app to pull new image
-        run: |
-          az webapp restart -g $env:RG -n $env:WEBAPP
+        run: az webapp restart -g "$RG" -n "$WEBAPP"
 
       - name: Wait for app to come up
-        # B1 cold start (Docker pull + Node boot) reliably 2-4 min.
-        # curl --fail beats Invoke-WebRequest on TLS edge cases.
+        # Container cold start (Docker pull + Node boot) on B1 reliably
+        # takes 2-4 minutes. Poll /api/health for up to 5 minutes.
         run: |
-          $url = "https://$env:WEBAPP.azurewebsites.net/api/health"
-          $ok = $false
-          for ($i = 0; $i -lt 60; $i++) {
-            cmd /c "curl -fsS --max-time 8 $url > nul 2>&1"
-            if ($LASTEXITCODE -eq 0) {
-              Write-Host "Healthy after $($i*5)s"
-              $ok = $true
-              break
-            }
-            Start-Sleep -Seconds 5
-          }
-          if (-not $ok) { throw "Health check did not pass within 5 min" }
-          exit 0
+          url="https://$WEBAPP.azurewebsites.net/api/health"
+          for i in $(seq 1 60); do
+            if curl -fsS --max-time 8 "$url" > /dev/null 2>&1; then
+              echo "Healthy after $((i * 5))s"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "Health check did not pass within 5 min" >&2
+          exit 1
