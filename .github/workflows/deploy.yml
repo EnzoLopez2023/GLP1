@@ -51,9 +51,28 @@ jobs:
         # If this fails with "az not recognized", az isn't on the MACHINE
         # PATH. Fix system-wide PATH then Restart-Service the runner.
         # (See MIGRATION_RCA.md issue #8a.)
+        # If it fails on "az is not logged in" — the runner service context
+        # may not have visibility into the interactive `az login` token
+        # cache (DPAPI encrypts per-LOGONSESSION). Diagnostics below.
         run: |
-          $sub = (az account show --query id -o tsv)
-          if (-not $sub) { throw "az is not logged in on this runner" }
+          Write-Host "WHOAMI: $(whoami)"
+          Write-Host "USERPROFILE: $env:USERPROFILE"
+          Write-Host "AZURE_CONFIG_DIR (env): $env:AZURE_CONFIG_DIR"
+          Write-Host "az path: $((Get-Command az -ErrorAction SilentlyContinue).Source)"
+          Write-Host ""
+          Write-Host "Listing .azure dirs found on the filesystem:"
+          @("$env:USERPROFILE\.azure", "C:\Users\enzol\.azure") | Sort-Object -Unique | ForEach-Object {
+            if (Test-Path $_) { Write-Host "  EXISTS: $_ ($(Get-ChildItem $_ | Measure-Object).Count files)" }
+            else { Write-Host "  MISSING: $_" }
+          }
+          Write-Host ""
+          Write-Host "Running 'az account show' (capturing stderr):"
+          $out = (az account show 2>&1)
+          Write-Host "  exit code: $LASTEXITCODE"
+          Write-Host "  output:"
+          $out | ForEach-Object { Write-Host "    $_" }
+          $sub = (az account show --query id -o tsv 2>$null)
+          if (-not $sub) { throw "az is not logged in on this runner — see diagnostics above" }
           Write-Host "Subscription: $sub"
 
       - name: Build image in ACR
