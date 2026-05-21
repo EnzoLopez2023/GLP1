@@ -856,6 +856,48 @@ Be encouraging and specific to the numbers. No markdown formatting, plain senten
   }
 })
 
+// ── AI: Analyze Meal Photo ────────────────────────────────────────────────────
+app.post('/api/ai/analyze-meal-photo', async (req, res) => {
+  if (!anthropic) return res.status(503).json({ error: 'AI not configured — set ANTHROPIC_API_KEY in .env' })
+
+  const { imageBase64, mediaType } = req.body
+  if (!imageBase64 || !mediaType) {
+    return res.status(400).json({ error: 'imageBase64 and mediaType are required' })
+  }
+
+  try {
+    const msg = await anthropic.messages.create({
+      model: 'claude-sonnet-4-6',
+      max_tokens: 200,
+      messages: [{
+        role: 'user',
+        content: [
+          {
+            type: 'image',
+            source: { type: 'base64', media_type: mediaType, data: imageBase64 },
+          },
+          {
+            type: 'text',
+            text: `Identify the food in this photo and estimate its nutritional content for a typical single serving or what's visible on the plate.
+
+Respond ONLY with a valid JSON object, no markdown, no explanation:
+{"name":"<descriptive meal name>","proteinG":<integer>,"carbsG":<integer>,"fatG":<integer>,"caloriesKcal":<integer>}
+
+Use realistic estimates. All values must be non-negative integers.`,
+          },
+        ],
+      }],
+    })
+
+    const text = msg.content[0]?.type === 'text' ? msg.content[0].text.trim() : ''
+    const data = JSON.parse(text)
+    res.json(data)
+  } catch (err) {
+    console.error('AI analyze-meal-photo error:', err)
+    res.status(500).json({ error: 'Could not analyze photo' })
+  }
+})
+
 // ── AI: Knowledge Base Q&A ────────────────────────────────────────────────────
 app.post('/api/ai/ask', async (req, res) => {
   if (!anthropic) return res.status(503).json({ error: 'AI not configured — set ANTHROPIC_API_KEY in .env' })

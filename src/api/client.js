@@ -134,5 +134,6 @@ export const api = {
 
   // ── AI ────────────────────────────────────────────────────────────────────
   getNutritionGlucoseInsight: (data) => post('/ai/nutrition-glucose-insight', data),
+  analyzeMealPhoto:           (data) => post('/ai/analyze-meal-photo', data),
   askQuestion:                (data) => post('/ai/ask', data),
 }

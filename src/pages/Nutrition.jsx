@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useRef } from 'react'
 import { api } from '../api/client'
 import { useQuery } from '../hooks/useQuery'
 import { toDateStr, lastNDays } from '../utils/dateHelpers'
@@ -9,7 +9,7 @@ import Button from '../components/ui/Button'
 import ProgressBar from '../components/ui/ProgressBar'
 import Modal from '../components/ui/Modal'
 import { FormField, Input, Select, Textarea } from '../components/ui/FormField'
-import { Plus, Sparkles } from 'lucide-react'
+import { Plus, Sparkles, Camera, Loader } from 'lucide-react'
 import toast from 'react-hot-toast'
 
 const PROTEIN_GOAL = 120
@@ -217,7 +217,41 @@ function EditDayModal({ isOpen, onClose, record, onSaved }) {
 
 function AddMealModal({ isOpen, onClose, onSaved }) {
   const [form, setForm] = useState({ name:'', mealType:'Breakfast', proteinG:'', carbsG:'', fatG:'', caloriesKcal:'', notes:'' })
+  const [scanning, setScanning] = useState(false)
+  const fileInputRef = useRef(null)
   const set = (k,v) => setForm(f => ({ ...f, [k]: v }))
+
+  async function handlePhotoChange(e) {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setScanning(true)
+    try {
+      const dataUrl = await new Promise((resolve, reject) => {
+        const reader = new FileReader()
+        reader.onload = () => resolve(reader.result)
+        reader.onerror = reject
+        reader.readAsDataURL(file)
+      })
+      // dataUrl = "data:<mediaType>;base64,<data>"
+      const [header, imageBase64] = dataUrl.split(',')
+      const mediaType = header.match(/data:([^;]+)/)[1]
+      const result = await api.analyzeMealPhoto({ imageBase64, mediaType })
+      setForm(f => ({
+        ...f,
+        name:         result.name        ?? f.name,
+        proteinG:     result.proteinG    != null ? String(result.proteinG)    : f.proteinG,
+        carbsG:       result.carbsG      != null ? String(result.carbsG)      : f.carbsG,
+        fatG:         result.fatG        != null ? String(result.fatG)        : f.fatG,
+        caloriesKcal: result.caloriesKcal != null ? String(result.caloriesKcal) : f.caloriesKcal,
+      }))
+      toast.success('Meal identified — review and save!')
+    } catch {
+      toast.error('Could not analyze photo. Fill in manually.')
+    } finally {
+      setScanning(false)
+      e.target.value = ''
+    }
+  }
 
   async function handleSubmit(e) {
     e.preventDefault()
@@ -225,7 +259,6 @@ function AddMealModal({ isOpen, onClose, onSaved }) {
     await api.addMeal({ ...form, date: today,
       proteinG: Number(form.proteinG)||0, carbsG: Number(form.carbsG)||0,
       fatG: Number(form.fatG)||0, caloriesKcal: Number(form.caloriesKcal)||0 })
-    // Roll up into day
     const rec = await api.getTodayNutrition()
     await api.updateNutrition(today, {
       proteinG:     (rec.proteinG??0)     + (Number(form.proteinG)||0),
@@ -241,7 +274,20 @@ function AddMealModal({ isOpen, onClose, onSaved }) {
 
   return (
     <Modal isOpen={isOpen} onClose={onClose} title="Log a Meal">
+      {/* hidden file input — accepts camera or gallery */}
+      <input ref={fileInputRef} type="file" accept="image/*" capture="environment"
+        className="hidden" onChange={handlePhotoChange} />
+
       <form onSubmit={handleSubmit} className="space-y-3">
+        {/* AI scan button */}
+        <button type="button" disabled={scanning}
+          onClick={() => fileInputRef.current?.click()}
+          className="w-full flex items-center justify-center gap-2 rounded-xl border-2 border-dashed border-brand-200 bg-brand-50 py-3 text-sm font-medium text-brand-700 hover:bg-brand-100 disabled:opacity-60 transition-colors">
+          {scanning
+            ? <><Loader size={16} className="animate-spin" /> Analyzing photo…</>
+            : <><Camera size={16} /> Scan Food Photo</>}
+        </button>
+
         <FormField label="Meal Name" htmlFor="mname" required>
           <Input id="mname" value={form.name} onChange={e => set('name', e.target.value)}
             placeholder="e.g. Grilled Chicken Salad" required />
